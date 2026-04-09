@@ -1,0 +1,18 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Flutter/Dart
+.dart_tool/
+.packages
+.pub-cache/
+build/
+*.worker.js
+
+# OS files
+.DS_Store
+Thumbs.db
+
+backend/model.pkl
