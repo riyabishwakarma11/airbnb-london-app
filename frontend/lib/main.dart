@@ -84,7 +84,7 @@ class _PricePredictorState extends State<PricePredictor> {
     setState(() => isLoading = true);
     try {
       final response = await http.post(
-        Uri.parse('http://localhost:8000/predict'),
+        Uri.parse('https://airbnb-london-app.onrender.com/predict'),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "neighbourhood": selectedBorough,
