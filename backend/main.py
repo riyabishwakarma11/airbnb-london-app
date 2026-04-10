@@ -1,3 +1,5 @@
+import json
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -5,6 +7,8 @@ import pickle
 import pandas as pd
 import numpy as np
 import math
+import joblib
+import json
 
 app = FastAPI()
 
@@ -15,8 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-with open("model.pkl", "rb") as f:
-    model = pickle.load(f)
+model = joblib.load("model.pkl")
 
 CENTRE_LAT, CENTRE_LON = 51.5074, -0.1278
 BOROUGH_COORDS = {
@@ -90,9 +93,11 @@ async def predict(data: PredictionInput):
 
     df = pd.DataFrame([input_data])[columns]
     
-    # DEBUG: This will print the exact row sent to the model in your VS Code terminal
-    print("\n--- Model Input Row ---")
-    print(df.to_string())
+    print("\n--- COPY THIS DICTIONARY TO COLAB ---")
+# This prints a perfect Python dictionary you can copy easily
+    print(json.dumps(input_data, indent=2))
+    print("--------------------------------------")
+    
     
     log_prediction = model.predict(df)[0]
     final_price = np.expm1(log_prediction)
