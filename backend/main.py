@@ -1,17 +1,16 @@
+import os
 import json
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import pickle
+import joblib
 import pandas as pd
 import numpy as np
 import math
-import joblib
-import json
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI()
 
+# 1. CORS Setup (Allows Flutter Web to talk to the API)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,8 +18,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-model = joblib.load("model.pkl")
+# 2. FILE PATH LOGIC (The "Anti-Error" Fix)
+# This finds the exact folder where main.py lives, even on a cloud server
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(BASE_DIR, "model.pkl")
+columns_path = os.path.join(BASE_DIR, "columns.json")
 
+# 3. LOAD THE BRAIN AND THE MANUAL
+# We do this at the top so the app crashes early if files are missing
+try:
+    with open(columns_path, "r") as f:
+        trained_columns = json.load(f)
+    model = joblib.load(model_path)
+    print("✅ Model and Columns loaded successfully!")
+except Exception as e:
+    print(f"❌ Error loading files: {e}")
+
+# 4. LONDON CONSTANTS
 CENTRE_LAT, CENTRE_LON = 51.5074, -0.1278
 BOROUGH_COORDS = {
     "Westminster": (51.4975, -0.1357), "Hackney": (51.5450, -0.0553),
@@ -48,6 +62,7 @@ def calculate_distance(lat, lon):
         math.cos(lat * p) * (1 - math.cos((lon - CENTRE_LON) * p)) / 2
     return 12742 * math.asin(math.sqrt(a))
 
+# 5. INPUT SCHEMA
 class PredictionInput(BaseModel):
     neighbourhood: str
     room_type: str
@@ -55,50 +70,44 @@ class PredictionInput(BaseModel):
     availability_365: int
     host_listings_count: int
 
+# 6. THE PREDICTION ENDPOINT
 @app.post("/predict")
 async def predict(data: PredictionInput):
-    columns = [
-        'minimum_nights', 'number_of_reviews', 'reviews_per_month', 
-        'availability_365', 'number_of_reviews_ltm', 'days_since_last_review',
-        'room_type_Hotel room', 'room_type_Private room', 'room_type_Shared room',
-        'neighbourhood_Barnet', 'neighbourhood_Bexley', 'neighbourhood_Brent', 
-        'neighbourhood_Bromley', 'neighbourhood_Camden', 'neighbourhood_City of London', 
-        'neighbourhood_Croydon', 'neighbourhood_Ealing', 'neighbourhood_Enfield', 
-        'neighbourhood_Greenwich', 'neighbourhood_Hackney', 
-        'neighbourhood_Hammersmith and Fulham', 'neighbourhood_Haringey', 
-        'neighbourhood_Harrow', 'neighbourhood_Havering', 'neighbourhood_Hillingdon', 
-        'neighbourhood_Hounslow', 'neighbourhood_Islington', 'neighbourhood_Kensington and Chelsea', 
-        'neighbourhood_Kingston upon Thames', 'neighbourhood_Lambeth', 'neighbourhood_Lewisham', 
-        'neighbourhood_Merton', 'neighbourhood_Newham', 'neighbourhood_Redbridge', 
-        'neighbourhood_Richmond upon Thames', 'neighbourhood_Southwark', 'neighbourhood_Sutton', 
-        'neighbourhood_Tower Hamlets', 'neighbourhood_Waltham Forest', 'neighbourhood_Wandsworth', 
-        'neighbourhood_Westminster', 'has_no_reviews', 'distance_to_center', 
-        'host_tier', 'competition_count'
-    ]
+    # Step A: Initialize all columns from columns.json to 0
+    input_data = {col: 0 for col in trained_columns}
     
-    input_data = {col: 0 for col in columns}
-    input_data['minimum_nights'] = data.minimum_nights
-    input_data['availability_365'] = data.availability_365
-    input_data['has_no_reviews'] = 1
-    input_data['host_tier'] = 1
-    input_data['competition_count'] = 10 
+    # Step B: Fill with User data (if the columns exist in the model)
+    if 'minimum_nights' in input_data: input_data['minimum_nights'] = data.minimum_nights
+    if 'availability_365' in input_data: input_data['availability_365'] = data.availability_365
     
+    # Defaults for new listings
+    if 'has_no_reviews' in input_data: input_data['has_no_reviews'] = 1
+    if 'host_tier' in input_data: input_data['host_tier'] = 1
+    if 'competition_count' in input_data: input_data['competition_count'] = 10 
+    
+    # Step C: Distance calculation
     lat, lon = BOROUGH_COORDS.get(data.neighbourhood, (CENTRE_LAT, CENTRE_LON))
-    input_data['distance_to_center'] = calculate_distance(lat, lon)
+    if 'distance_to_center' in input_data:
+        input_data['distance_to_center'] = calculate_distance(lat, lon)
 
-    if f"room_type_{data.room_type}" in input_data:
-        input_data[f"room_type_{data.room_type}"] = 1
-    if f"neighbourhood_{data.neighbourhood}" in input_data:
-        input_data[f"neighbourhood_{data.neighbourhood}"] = 1
+    # Step D: One-Hot Encoding (Dynamic Matching)
+    room_col = f"room_type_{data.room_type}"
+    if room_col in input_data:
+        input_data[room_col] = 1
+        
+    borough_col = f"neighbourhood_{data.neighbourhood}"
+    if borough_col in input_data:
+        input_data[borough_col] = 1
 
-    df = pd.DataFrame([input_data])[columns]
+    # Step E: Convert to DataFrame using the EXACT Colab Column Order
+    df = pd.DataFrame([input_data])[trained_columns]
     
+    # Step F: Debug Print (Perfect for copying to Colab)
     print("\n--- COPY THIS DICTIONARY TO COLAB ---")
-# This prints a perfect Python dictionary you can copy easily
     print(json.dumps(input_data, indent=2))
     print("--------------------------------------")
     
-    
+    # Step G: Prediction and Reversing Log Price
     log_prediction = model.predict(df)[0]
     final_price = np.expm1(log_prediction)
     
